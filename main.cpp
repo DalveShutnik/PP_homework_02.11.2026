@@ -93,6 +93,13 @@ void task_t::operator()() {
 }
 
 int main() {
-  th_pool_t pool(5);
+  th_pool_t pool(2);
+  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
+  for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+  pool.expand(5);
+  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
+  for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+  pool.shrink(1);
+  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
   for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
 }
