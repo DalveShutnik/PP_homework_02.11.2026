@@ -12,7 +12,7 @@ struct task_t { void operator()(); };
 
 struct th_pool_t {
   using f_t = std::function< void(void) >;
-  explicit th_pool_t(unsigned int k);
+  explicit th_pool_t(unsigned int k, unsigned int batch = 1);
   ~th_pool_t();
   void submit(f_t f);
   void expand(unsigned int k);
@@ -26,6 +26,7 @@ private:
   bool stop_{false};
   std::vector< std::thread > ths_;
   std::vector< bool > quit_;
+  unsigned int batch_;
 };
 
 void th_pool_t::submit(f_t f) {
@@ -33,7 +34,9 @@ void th_pool_t::submit(f_t f) {
   cd_.notify_one();
 }
 
-th_pool_t::th_pool_t(unsigned int k) {
+th_pool_t::th_pool_t(unsigned int k, unsigned int batch):
+  batch_(batch ? batch : 1)
+{
   expand(k);
 }
 
@@ -78,10 +81,15 @@ void th_pool_t::execute(size_t id) {
     cd_.wait(lck, proceed);
     if (quit_[id]) break;
     if (tasks_.empty()) continue;
-    auto task = std::move(tasks_.front());
-    tasks_.pop();
+    std::vector< f_t > batch;
+    while (!tasks_.empty() && batch.size() < batch_) {
+      batch.push_back(std::move(tasks_.front()));
+      tasks_.pop();
+    }
     lck.unlock();
-    try { task(); } catch (...) {}
+    for (auto && task: batch) {
+      try { task(); } catch (...) {}
+    }
     lck.lock();
   } while (!stop_ || !tasks_.empty());
 }
