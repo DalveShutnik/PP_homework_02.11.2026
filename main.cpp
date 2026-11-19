@@ -16,6 +16,7 @@ struct th_pool_t {
   ~th_pool_t();
   void submit(f_t f);
   void expand(unsigned int k);
+  void shrink(unsigned int k);
   size_t size() const;
 private:
   void execute(size_t id);
@@ -43,6 +44,19 @@ void th_pool_t::expand(unsigned int k) {
     quit_.push_back(false);
     ths_.emplace_back([this, id]() { execute(id); });
   }
+}
+
+void th_pool_t::shrink(unsigned int k) {
+  if (k == 0 || k >= ths_.size()) return;
+  mx_.lock();
+  for (size_t i = k; i < quit_.size(); ++i) quit_[i] = true;
+  mx_.unlock();
+  cd_.notify_all();
+  for (size_t i = k; i < ths_.size(); ++i) ths_[i].join();
+  mx_.lock();
+  ths_.resize(k);
+  quit_.resize(k);
+  mx_.unlock();
 }
 
 size_t th_pool_t::size() const {
