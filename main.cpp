@@ -1,5 +1,6 @@
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -23,12 +24,14 @@ struct th_pool_t {
   size_t size() const;
 private:
   void execute(size_t id);
+  bool has_tasks() const;
   std::queue< f_t > tasks_;
   std::mutex mx_;
   std::condition_variable cd_;
   bool stop_{false};
   std::vector< std::thread > ths_;
   std::vector< bool > quit_;
+  std::vector< std::deque< f_t > > local_;
   unsigned int batch_;
 };
 
@@ -48,6 +51,7 @@ void th_pool_t::expand(unsigned int k) {
   while (ths_.size() < k) {
     size_t id = ths_.size();
     quit_.push_back(false);
+    local_.emplace_back();
     ths_.emplace_back([this, id]() { execute(id); });
   }
 }
@@ -60,9 +64,14 @@ void th_pool_t::shrink(unsigned int k) {
   cd_.notify_all();
   for (size_t i = k; i < ths_.size(); ++i) ths_[i].join();
   mx_.lock();
+  for (size_t i = k; i < local_.size(); ++i) {
+    for (auto && task: local_[i]) tasks_.push(std::move(task));
+  }
   ths_.resize(k);
   quit_.resize(k);
+  local_.resize(k);
   mx_.unlock();
+  cd_.notify_all();
 }
 
 size_t th_pool_t::size() const {
@@ -79,22 +88,43 @@ void th_pool_t::execute(size_t id) {
   std::unique_lock lck(mx_);
   do {
     auto proceed = [&]() {
-      return !tasks_.empty() || stop_ || quit_[id];
+      return has_tasks() || stop_ || quit_[id];
     };
     cd_.wait(lck, proceed);
     if (quit_[id]) break;
-    if (tasks_.empty()) continue;
-    std::vector< f_t > batch;
-    while (!tasks_.empty() && batch.size() < batch_) {
-      batch.push_back(std::move(tasks_.front()));
-      tasks_.pop();
+    if (!has_tasks()) continue;
+    if (local_[id].empty() && !tasks_.empty()) {
+      while (!tasks_.empty() && local_[id].size() < batch_) {
+        local_[id].push_back(std::move(tasks_.front()));
+        tasks_.pop();
+      }
+      cd_.notify_all();
+    }
+    f_t task;
+    if (!local_[id].empty()) {
+      task = std::move(local_[id].front());
+      local_[id].pop_front();
+    } else {
+      for (auto && q: local_) {
+        if (!q.empty()) {
+          task = std::move(q.back());
+          q.pop_back();
+          break;
+        }
+      }
     }
     lck.unlock();
-    for (auto && task: batch) {
-      try { task(); } catch (...) {}
-    }
+    try { task(); } catch (...) {}
     lck.lock();
-  } while (!stop_ || !tasks_.empty());
+  } while (!stop_ || has_tasks());
+}
+
+bool th_pool_t::has_tasks() const {
+  if (!tasks_.empty()) return true;
+  for (auto && q: local_) {
+    if (!q.empty()) return true;
+  }
+  return false;
 }
 
 void task_t::operator()() {
