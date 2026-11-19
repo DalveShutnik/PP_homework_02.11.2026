@@ -8,7 +8,10 @@
 #include <thread>
 #include <vector>
 
-struct task_t { void operator()(); };
+struct task_t {
+  std::chrono::milliseconds time{200};
+  void operator()();
+};
 
 struct th_pool_t {
   using f_t = std::function< void(void) >;
@@ -95,19 +98,31 @@ void th_pool_t::execute(size_t id) {
 }
 
 void task_t::operator()() {
-  using namespace std::chrono_literals;
-  std::this_thread::sleep_for(200ms);
-  std::osyncstream(std::cout) << "!\n";
+  std::this_thread::sleep_for(time);
+  std::osyncstream(std::cout) << std::this_thread::get_id() << ": " << time.count() << " мс\n";
 }
 
 int main() {
-  th_pool_t pool(2);
-  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
-  for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
-  pool.expand(5);
-  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
-  for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
-  pool.shrink(1);
-  std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
-  for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+  using namespace std::chrono_literals;
+  {
+    th_pool_t pool(2);
+    std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
+    for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+    pool.expand(5);
+    std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
+    for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+    pool.shrink(1);
+    std::osyncstream(std::cout) << "потоков: " << pool.size() << "\n";
+    for (size_t i = 0; i < 10; ++i) pool.submit(task_t{});
+  }
+  std::cout << "неравномерные задачи:\n";
+  auto start = std::chrono::steady_clock::now();
+  {
+    th_pool_t pool(3, 4);
+    for (size_t i = 0; i < 4; ++i) pool.submit(task_t{1000ms});
+    for (size_t i = 0; i < 8; ++i) pool.submit(task_t{100ms});
+  }
+  auto time = std::chrono::steady_clock::now() - start;
+  auto ms = std::chrono::duration_cast< std::chrono::milliseconds >(time).count();
+  std::cout << "время: " << ms << " мс\n";
 }
