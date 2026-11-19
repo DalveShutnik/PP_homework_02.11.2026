@@ -18,12 +18,13 @@ struct th_pool_t {
   void expand(unsigned int k);
   size_t size() const;
 private:
-  void execute();
+  void execute(size_t id);
   std::queue< f_t > tasks_;
   std::mutex mx_;
   std::condition_variable cd_;
   bool stop_{false};
   std::vector< std::thread > ths_;
+  std::vector< bool > quit_;
 };
 
 void th_pool_t::submit(f_t f) {
@@ -36,8 +37,12 @@ th_pool_t::th_pool_t(unsigned int k) {
 }
 
 void th_pool_t::expand(unsigned int k) {
-  auto thf = [this]() { execute(); };
-  while (ths_.size() < k) ths_.emplace_back(thf);
+  std::lock_guard lck(mx_);
+  while (ths_.size() < k) {
+    size_t id = ths_.size();
+    quit_.push_back(false);
+    ths_.emplace_back([this, id]() { execute(id); });
+  }
 }
 
 size_t th_pool_t::size() const {
@@ -50,13 +55,14 @@ th_pool_t::~th_pool_t() {
   for (auto && th: ths_) th.join();
 }
 
-void th_pool_t::execute() {
+void th_pool_t::execute(size_t id) {
   std::unique_lock lck(mx_);
   do {
     auto proceed = [&]() {
-      return !tasks_.empty() || stop_;
+      return !tasks_.empty() || stop_ || quit_[id];
     };
     cd_.wait(lck, proceed);
+    if (quit_[id]) break;
     if (tasks_.empty()) continue;
     auto task = std::move(tasks_.front());
     tasks_.pop();
