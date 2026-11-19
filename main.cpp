@@ -15,6 +15,8 @@ struct th_pool_t {
   explicit th_pool_t(unsigned int k);
   ~th_pool_t();
   void submit(f_t f);
+  void expand(unsigned int k);
+  size_t size() const;
 private:
   void execute();
   std::queue< f_t > tasks_;
@@ -30,8 +32,16 @@ void th_pool_t::submit(f_t f) {
 }
 
 th_pool_t::th_pool_t(unsigned int k) {
+  expand(k);
+}
+
+void th_pool_t::expand(unsigned int k) {
   auto thf = [this]() { execute(); };
-  for (; k; --k) ths_.emplace_back(thf);
+  while (ths_.size() < k) ths_.emplace_back(thf);
+}
+
+size_t th_pool_t::size() const {
+  return ths_.size();
 }
 
 th_pool_t::~th_pool_t() {
